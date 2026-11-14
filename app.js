@@ -191,9 +191,12 @@ function promiseForm(id, preset = {}) {
       title: data.title.trim(), due: data.due, time: data.time, notes: data.notes.trim(),
       clientId: data.client.trim() ? findOrCreateClient(data.client).id : null,
     };
-    if (id) Object.assign(db.promises.find((x) => x.id === id), rec);
-    else db.promises.push({ id: uid(), done: false, created: Date.now(), ...rec });
-    save(); toast(id ? 'Saved' : 'Promise added. Tap 🔔 to set an alarm');
+    let saved;
+    if (id) { saved = Object.assign(db.promises.find((x) => x.id === id), rec); }
+    else { saved = { id: uid(), done: false, created: Date.now(), ...rec }; db.promises.push(saved); }
+    save();
+    window.BizNative?.syncPromise(saved);
+    toast(id ? 'Saved' : (window.BizNative ? 'Promise added. You’ll get a reminder.' : 'Promise added. Tap 🔔 to set an alarm'));
   }, !id);
 }
 
@@ -654,6 +657,9 @@ const VIEWS = {
         <label class="btn" style="margin:0;color:var(--ink)">Restore from backup<input type="file" id="restoreFile" accept=".json,application/json" hidden></label>
       </div>
       ${installEvt ? '<div class="card"><button class="btn primary" style="width:100%" data-act="install">Install BizBook on this phone</button></div>' : ''}
+      ${!window.Capacitor?.isNativePlatform?.() ? `<h2 class="sec">Android app</h2>
+      <div class="card"><p class="hint" style="margin:0 0 12px">Prefer a proper app, with real phone notifications for reminders? Get the Android version.</p>
+      <a class="btn primary" style="width:100%" href="download.html">${ICON.doc} Download for Android</a></div>` : ''}
       <p class="hint" style="text-align:center;margin-top:20px">BizBook v1.0 · ${db.clients.length} clients · ${db.promises.length} promises · ${db.docs.length} quotes/bills</p>
     </div>`;
     return { title: 'Settings', html, back: true, tab: '' };
@@ -787,11 +793,13 @@ const actions = {
   togglePromise: (d) => {
     const p = findP(d.id); if (!p) return;
     p.done = !p.done; p.doneAt = p.done ? Date.now() : null;
-    save(); render(); toast(p.done ? 'Done ✓' : 'Moved back to “To do”');
+    save(); window.BizNative?.syncPromise(p); render(); toast(p.done ? 'Done ✓' : 'Moved back to “To do”');
   },
   delPromise: (d) => {
     if (!confirm('Delete this promise?')) return;
+    const gone = findP(d.id);
     db.promises = db.promises.filter((p) => p.id !== d.id); save(); closeSheet(); render();
+    if (gone) window.BizNative?.cancelPromise(gone);
   },
   remind: (d) => {
     const p = findP(d.id); if (!p) return;
@@ -823,11 +831,12 @@ const actions = {
   delClient: (d) => {
     const c = getClient(d.id); if (!c) return;
     if (!confirm(`Delete ${c.name} and all their promises, measurements, quotes and bills?`)) return;
+    const theirs = db.promises.filter((x) => x.clientId === d.id);
     db.clients = db.clients.filter((x) => x.id !== d.id);
     db.promises = db.promises.filter((x) => x.clientId !== d.id);
     db.measures = db.measures.filter((x) => x.clientId !== d.id);
     db.docs = db.docs.filter((x) => x.clientId !== d.id);
-    save(); toast('Client deleted'); go('#/clients');
+    save(); theirs.forEach((p) => window.BizNative?.cancelPromise(p)); toast('Client deleted'); go('#/clients');
   },
   // measurement editor
   addRoom: () => { const m = currentObj(); m.rooms.push({ name: 'Room ' + (m.rooms.length + 1), items: [blankItem()] }); save(); render(); },
@@ -910,7 +919,7 @@ function restore(input) {
       if (!Array.isArray(data.clients) || !Array.isArray(data.promises)) throw new Error('bad');
       if (!confirm(`Restore backup with ${data.clients.length} clients and ${data.promises.length} promises? This replaces what is on this phone now.`)) return;
       db = { ...structuredClone(DEFAULTS), ...data, settings: { ...DEFAULTS.settings, ...data.settings } };
-      save(); toast('Backup restored'); render();
+      save(); window.BizNative?.rescheduleAll(); toast('Backup restored'); render();
     } catch (e) { toast('That file is not a BizBook backup'); }
     input.value = '';
   };
