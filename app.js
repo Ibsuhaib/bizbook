@@ -75,6 +75,56 @@ function download(content, name, type) {
 }
 const slug = (s) => String(s || 'file').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'file';
 
+/* ---------- motion: tap sparks, spotlight glow, count-up (react-bits-style feedback) ---------- */
+const reduceMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+const SPARK_SEL = '.btn, .fab, .check, .chip, .quick button, .keys button, .icon-btn, .tabbar a, .stat, .seg button';
+function spark(x, y, el) {
+  if (reduceMotion()) return;
+  let layer = document.querySelector('.spark-layer');
+  if (!layer) { layer = document.createElement('div'); layer.className = 'spark-layer'; document.body.appendChild(layer); }
+  const warm = el.classList.contains('danger') || el.classList.contains('late');
+  for (let i = 0; i < 6; i++) {
+    const s = document.createElement('span');
+    s.className = 'spark';
+    s.style.left = x + 'px'; s.style.top = y + 'px';
+    s.style.setProperty('--rot', (60 * i + Math.random() * 24 - 12) + 'deg');
+    s.style.setProperty('--dist', (16 + Math.random() * 12) + 'px');
+    if (warm) s.style.setProperty('--spk', 'var(--warn)');
+    layer.appendChild(s);
+    s.addEventListener('animationend', () => s.remove(), { once: true });
+  }
+}
+const SPOT_SEL = '.card, .stat, .quick button';
+function litAt(el, x, y) {
+  if (reduceMotion()) return;
+  const r = el.getBoundingClientRect();
+  el.style.setProperty('--mx', (x - r.left) + 'px');
+  el.style.setProperty('--my', (y - r.top) + 'px');
+  el.classList.add('lit');
+  clearTimeout(el._litT);
+  el._litT = setTimeout(() => el.classList.remove('lit'), 550);
+}
+/* Animates a number's text from 0 up to its target; formatter defaults to a plain integer. */
+function animateNumber(el, to, formatter = (v) => String(Math.round(v))) {
+  if (reduceMotion() || !(to > 0)) { el.textContent = formatter(to); return; }
+  const dur = 650, start = performance.now();
+  function step(now) {
+    const p = Math.min(1, (now - start) / dur);
+    const eased = 1 - Math.pow(1 - p, 3);
+    el.textContent = formatter(to * eased);
+    if (p < 1) requestAnimationFrame(step); else el.textContent = formatter(to);
+  }
+  requestAnimationFrame(step);
+}
+function countUpIn(root) {
+  root.querySelectorAll('[data-num]').forEach((el) => animateNumber(el, Number(el.dataset.num) || 0));
+  root.querySelectorAll('[data-money]').forEach((el) => animateNumber(el, Number(el.dataset.money) || 0, money));
+}
+/* Stagger entrance: give each card/item/stat/quick-button a rising index so riseIn's delay fans out. */
+function staggerIn(root) {
+  root.querySelectorAll('.card, .item, .stat, .quick button').forEach((el, i) => el.style.setProperty('--i', Math.min(i, 16)));
+}
+
 const ICON = {
   bell: '<svg viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0"/></svg>',
   tick: '<svg viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></svg>',
@@ -339,9 +389,9 @@ const VIEWS = {
     if (fresh) html += `<div class="card"><b>Welcome to BizBook 👋</b><p class="hint" style="margin:6px 0 12px">First, add your business name and phone. They go on every quote and bill.</p><a class="btn primary" href="#/settings">Set up my business</a></div>`;
     if (installEvt) html += `<div class="card row" style="align-items:center"><span>Put BizBook on your home screen</span><button class="btn primary" style="flex:none" data-act="install">Install</button></div>`;
     html += `<div class="stats">
-      <a class="stat ${late.length ? 'red' : ''}" href="#/promises"><b>${late.length}</b><span>Overdue</span></a>
-      <a class="stat" href="#/promises"><b>${now.length}</b><span>Due today</span></a>
-      <a class="stat amber" href="#/docs" data-act="showBills"><b>${money(due)}</b><span>To collect</span></a>
+      <a class="stat ${late.length ? 'red' : ''}" href="#/promises"><b data-num="${late.length}">0</b><span>Overdue</span></a>
+      <a class="stat" href="#/promises"><b data-num="${now.length}">0</b><span>Due today</span></a>
+      <a class="stat amber" href="#/docs" data-act="showBills"><b data-money="${due}">${money(0)}</b><span>To collect</span></a>
     </div>
     <h2 class="sec">Quick add</h2>
     <div class="quick">
@@ -353,7 +403,7 @@ const VIEWS = {
     if (late.length) html += `<h2 class="sec red">Overdue (${late.length})</h2>` + promiseList(late);
     html += `<h2 class="sec">Today</h2>` + (now.length ? promiseList(now) : `<div class="card empty"><b>Nothing due today</b>Tap “Promise” above to add one.</div>`);
     if (soon.length) html += `<h2 class="sec">Next 7 days</h2>` + promiseList(soon);
-    return { title: 'BizBook', html, fab: () => quickMenu() };
+    return { title: 'BizBook', html, fab: () => quickMenu(), fabAlert: late.length > 0, after: () => countUpIn($('#view')) };
   },
 
   promises() {
@@ -406,7 +456,7 @@ const VIEWS = {
         <a class="btn wa" href="${esc(waLink(c.phone, 'Hello ' + c.name + ', '))}" target="_blank" rel="noopener">${ICON.chat} WhatsApp</a>` : ''}
         <button class="btn" data-act="editClient" data-id="${id}">${ICON.edit} Edit</button>
       </div></div>
-    ${bills.length ? `<div class="stats" style="grid-template-columns:1fr 1fr"><div class="stat"><b style="font-size:18px">${money(billed)}</b><span>Total billed</span></div><div class="stat ${bal > 0 ? 'red' : ''}"><b style="font-size:18px">${money(bal)}</b><span>Balance due</span></div></div>` : ''}
+    ${bills.length ? `<div class="stats" style="grid-template-columns:1fr 1fr"><div class="stat"><b style="font-size:18px" data-money="${billed}">${money(0)}</b><span>Total billed</span></div><div class="stat ${bal > 0 ? 'red' : ''}"><b style="font-size:18px" data-money="${bal}">${money(0)}</b><span>Balance due</span></div></div>` : ''}
     <h2 class="sec">Promises <button class="link" data-act="newPromise" data-client="${id}">+ Add</button></h2>
     ${ps.length ? promiseList(ps) : '<div class="card empty">No promises yet</div>'}
     <h2 class="sec">Measurements <button class="link" data-act="newMeasure" data-client="${id}">+ Add</button></h2>
@@ -414,7 +464,7 @@ const VIEWS = {
     <h2 class="sec">Quotes & bills <button class="link" data-act="newQuote" data-client="${id}">+ Add</button></h2>
     ${ds.length ? `<div class="card flush">${ds.map(docItem).join('')}</div>` : '<div class="card empty">No quotes or bills yet</div>'}
     <div class="row" style="margin-top:24px"><button class="btn danger" data-act="delClient" data-id="${id}">${ICON.trash} Delete client</button></div>`;
-    return { title: c.name, html, back: true, tab: 'clients', fab: () => quickMenu(id) };
+    return { title: c.name, html, back: true, tab: 'clients', fab: () => quickMenu(id), after: () => countUpIn($('#view')) };
   },
 
   measures() {
@@ -720,7 +770,7 @@ let fabAction = null;
 
 const actions = {
   fab: () => fabAction && fabAction(),
-  back: () => { if (history.length > 1 && navCount > 0) history.back(); else go('#/today'); },
+  back: () => { navDirection = 'back'; if (history.length > 1 && navCount > 0) history.back(); else go('#/today'); },
   closeSheet,
   newPromise: (d) => { closeSheet(); promiseForm(null, d.client ? { clientId: d.client } : {}); },
   newClient: () => { closeSheet(); clientForm(); },
@@ -891,6 +941,14 @@ document.addEventListener('click', (e) => {
   const fn = actions[el.dataset.act];
   if (fn) { e.preventDefault(); fn(el.dataset, el); }
 });
+document.addEventListener('click', (e) => {
+  const sp = e.target.closest(SPARK_SEL);
+  if (sp && e.detail !== 0) spark(e.clientX, e.clientY, sp); // e.detail 0 means a keyboard/synthetic click, no real tap point
+});
+document.addEventListener('pointerdown', (e) => {
+  const el = e.target.closest(SPOT_SEL);
+  if (el) litAt(el, e.clientX, e.clientY);
+});
 document.addEventListener('input', (e) => {
   const t = e.target;
   if (t.id === 'clientSearch') {
@@ -919,16 +977,24 @@ document.addEventListener('keydown', (e) => {
 /* ---------- router ---------- */
 let navCount = -1;
 let lastRoute = '';
+let navDirection = 'fwd';
 function render() {
   const [name = 'today', id] = location.hash.replace(/^#\/?/, '').split('/');
   const key = VIEWS[name] ? name : 'today';
   const v = VIEWS[key](id) || {};
   $('#title').textContent = v.title || 'BizBook';
   document.title = v.title && v.title !== 'BizBook' ? v.title + ' · BizBook' : 'BizBook';
-  $('#view').innerHTML = v.html || '';
+  const view = $('#view');
+  view.classList.remove('enter', 'enter-back');
+  view.innerHTML = v.html || '';
+  staggerIn(view); // set each child's --i before any layout flush, so its riseIn animation starts with the right delay from frame one
+  void view.offsetWidth; // reflow, so the view's own entrance animation replays even if the same class name is reused
+  view.classList.add(navDirection === 'back' ? 'enter-back' : 'enter');
+  navDirection = 'fwd';
   $('#backBtn').hidden = !v.back;
   fabAction = v.fab || null;
   $('#fab').hidden = !v.fab;
+  $('#fab').classList.toggle('alert', !!v.fabAlert);
   const tab = v.tab ?? key;
   document.querySelectorAll('.tabbar a').forEach((a) => a.classList.toggle('active', a.dataset.tab === tab));
   const route = key + '/' + (id || '');
