@@ -31,26 +31,13 @@ take site measurements, and send quotations and bills. It keeps everything in on
 
 ## How to install on a phone
 
-1. Put this project on GitHub (see below). GitHub Pages builds the site automatically.
-2. On the phone, open `https://<your-github-username>.github.io/bizbook/`
-3. **Android (Chrome):** menu ⋮ → **Install app** / **Add to Home screen**.
-   **iPhone (Safari):** Share button → **Add to Home Screen**.
-4. It now opens from the home screen like any app and works offline.
+Open **https://bizbook-rose.vercel.app** on an Android phone, tap **Download for Android**, open the
+file and tap **Install**. The Android project lives at https://github.com/Ibsuhaib/bizbook-apk.
 
-## Publish to GitHub
+## What is in this repo
 
-```bash
-cd bizbook
-git init
-git add .
-git commit -m "First version of BizBook"
-git branch -M main
-git remote add origin https://github.com/<your-username>/bizbook.git
-git push -u origin main
-```
-
-Then on GitHub: **Settings → Pages → Source: GitHub Actions**. The workflow in
-`.github/workflows/pages.yml` publishes the app every time you push.
+- `index.html` is the download page (the site's home page).
+- `app/` holds the app itself (HTML/CSS/JS). The Android build copies these files.
 
 ## Run it on your computer
 
@@ -58,7 +45,7 @@ Then on GitHub: **Settings → Pages → Source: GitHub Actions**. The workflow 
 cd bizbook
 python -m http.server 8080
 ```
-Open http://localhost:8080
+Open http://localhost:8080 for the download page, or http://localhost:8080/app/ for the app.
 
 ## Tech
 Plain HTML/CSS/JavaScript with no build step. Data is stored in the browser's `localStorage`, and
@@ -68,5 +55,4 @@ a service worker makes the app work offline.
 - Photo of the site attached to a measurement
 - Payment reminders to clients over WhatsApp
 - Material/stock list per project
-- Android APK build in GitHub Releases (Capacitor)
 - Hindi / Urdu language option

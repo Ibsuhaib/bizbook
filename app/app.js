@@ -734,7 +734,7 @@ const VIEWS = {
       ${installEvt ? '<div class="card"><button class="btn primary" style="width:100%" data-act="install">Install BizBook on this phone</button></div>' : ''}
       ${!window.Capacitor?.isNativePlatform?.() ? `<h2 class="sec">Android app</h2>
       <div class="card"><p class="hint" style="margin:0 0 12px">Prefer a proper app, with real phone notifications for reminders? Get the Android version.</p>
-      <a class="btn primary" style="width:100%" href="download.html">${ICON.doc} Download for Android</a></div>` : ''}
+      <a class="btn primary" style="width:100%" href="../">${ICON.doc} Download for Android</a></div>` : ''}
       <p class="hint" style="text-align:center;margin-top:20px">BizBook v1.1 · ${db.clients.length} clients · ${db.promises.length} promises · ${db.docs.length} quotes/bills</p>
     </div>`;
     return { title: 'Settings', html, back: true, tab: '' };
