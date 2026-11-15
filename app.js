@@ -9,6 +9,7 @@ const KEY = 'bizbook-v1';
 const DEFAULTS = {
   settings: {
     bizName: 'My Business', owner: '', phone: '', address: '', taxId: '',
+    tagline: '', email: '', payLabel: 'G-PAY NO.', payNo: '', billStyle: 'detailed',
     currency: '₹', taxName: 'GST', taxPct: '18', cc: '91',
     terms: '50% advance to start work. Balance on completion.\nQuotation valid for 15 days.',
     qNo: 0, bNo: 0,
@@ -22,11 +23,22 @@ let saveTimer = null;
 function load() {
   try {
     const d = JSON.parse(localStorage.getItem(KEY));
-    if (d && typeof d === 'object') {
-      return { ...structuredClone(DEFAULTS), ...d, settings: { ...DEFAULTS.settings, ...d.settings } };
-    }
+    if (d && typeof d === 'object') return migrate(d);
   } catch (e) { /* fall through to defaults */ }
   return structuredClone(DEFAULTS);
+}
+/* Fills in anything a newer version added, so old saved data and old backups keep working.
+   Older versions kept one "advance" number per bill; it becomes the first entry in the payment list. */
+function migrate(d) {
+  const out = { ...structuredClone(DEFAULTS), ...d, settings: { ...DEFAULTS.settings, ...d.settings } };
+  for (const k of ['clients', 'promises', 'measures', 'docs']) if (!Array.isArray(out[k])) out[k] = [];
+  out.docs.forEach((doc) => {
+    if (!Array.isArray(doc.payments)) doc.payments = [];
+    const old = parseFloat(String(doc.advance ?? '').replace(/,/g, ''));
+    if (old > 0) doc.payments.push({ id: 'adv' + (doc.id || ''), date: doc.date, amount: String(old), method: '', note: 'Advance' });
+    delete doc.advance;
+  });
+  return out;
 }
 function save() {
   clearTimeout(saveTimer);
@@ -115,6 +127,8 @@ function animateNumber(el, to, formatter = (v) => String(Math.round(v))) {
     if (p < 1) requestAnimationFrame(step); else el.textContent = formatter(to);
   }
   requestAnimationFrame(step);
+  // If the screen isn't being drawn (app in the background), frames don't run: make sure the real number still lands.
+  setTimeout(() => { if (el.isConnected) el.textContent = formatter(to); }, dur + 150);
 }
 function countUpIn(root) {
   root.querySelectorAll('[data-num]').forEach((el) => animateNumber(el, Number(el.dataset.num) || 0));
@@ -291,7 +305,7 @@ function newDoc(kind = 'quote', clientId = null, items = null, extra = {}) {
   const d = {
     id: uid(), kind, number: nextNumber(kind), clientId, date: today(),
     items: items || [{ desc: '', qty: '1', unit: '', rate: '' }],
-    discount: '', taxPct: String(db.settings.taxPct ?? ''), advance: '', notes: db.settings.terms, created: Date.now(), ...extra,
+    discount: '', taxPct: String(db.settings.taxPct ?? ''), payments: [], notes: db.settings.terms, created: Date.now(), ...extra,
   };
   db.docs.push(d); save(); go('#/doc/' + d.id);
   return d;
@@ -303,9 +317,21 @@ function docTotals(d) {
   const taxable = sub - disc;
   const tax = taxable * num(d.taxPct) / 100;
   const total = taxable + tax;
-  const adv = num(d.advance);
-  return { lines, sub, disc, tax, total, adv, balance: total - adv };
+  const paid = (d.payments || []).reduce((a, p) => a + num(p.amount), 0);
+  const balance = r2(total - paid);
+  // unpaid: nothing received yet. part: some received. paid: nothing left to collect.
+  const status = paid <= 0 ? 'unpaid' : balance > 0.005 ? 'part' : 'paid';
+  return { lines, sub, disc, tax, total, paid, balance, status };
 }
+const paymentsOf = (d) => [...(d.payments || [])].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+/* What to call a payment when the user didn't type a note: the first part-payment is the advance. */
+function payLabel(d, p, i) {
+  if (p.note) return p.note;
+  const t = docTotals(d);
+  if (i === 0 && num(p.amount) < t.total - 0.005) return 'Advance';
+  return i === paymentsOf(d).length - 1 && t.status === 'paid' ? 'Final payment' : 'Part payment';
+}
+const PAY_METHODS = ['Cash', 'GPay / UPI', 'Bank transfer', 'Cheque', 'Card'];
 function docText(d) {
   const s = db.settings, c = getClient(d.clientId), t = docTotals(d);
   const L = [`*${s.bizName}*`, `${d.kind === 'bill' ? 'INVOICE' : 'QUOTATION'} ${d.number} · ${longDate(d.date)}`];
@@ -319,8 +345,13 @@ function docText(d) {
   if (t.disc) L.push('Discount: −' + money(t.disc));
   if (t.tax) L.push(`${s.taxName} ${fmt(num(d.taxPct))}%: ${money(t.tax)}`);
   L.push(`*Total: ${money(t.total)}*`);
-  if (t.adv) L.push('Advance received: ' + money(t.adv), `*Balance due: ${money(t.balance)}*`);
+  if (t.paid) {
+    L.push('', 'Payments received:');
+    paymentsOf(d).forEach((p, i) => L.push(`• ${longDate(p.date)} – ${payLabel(d, p, i)}${p.method ? ' (' + p.method + ')' : ''}: ${money(num(p.amount))}`));
+    L.push(t.status === 'paid' ? '*PAID IN FULL ✅*' : `*Balance due: ${money(t.balance)}*`);
+  }
   if (d.notes) L.push('', d.notes);
+  if (s.payNo && t.status !== 'paid') L.push('', `${s.payLabel || 'Pay to'} ${s.payNo}`);
   if (s.phone) L.push('', s.owner ? `${s.owner} · ${s.phone}` : s.phone);
   return L.join('\n');
 }
@@ -449,6 +480,10 @@ const VIEWS = {
     const ds = db.docs.filter((d) => d.clientId === id).sort((a, b) => b.date.localeCompare(a.date));
     const bills = ds.filter((d) => d.kind === 'bill').map(docTotals);
     const billed = bills.reduce((s, t) => s + t.total, 0), bal = bills.reduce((s, t) => s + Math.max(0, t.balance), 0);
+    // Every payment this client has made. A quote that became a bill carries its advance over, so skip it to avoid counting twice.
+    const pays = ds.filter((d) => !d.converted).flatMap((d) => paymentsOf(d).map((p, i) => ({ d, p, label: payLabel(d, p, i) })))
+      .sort((a, b) => (b.p.date || '').localeCompare(a.p.date || ''));
+    const received = pays.reduce((s, x) => s + num(x.p.amount), 0);
     const html = `<div class="card">
       <div class="client-head"><div class="avatar">${esc(c.name.charAt(0).toUpperCase())}</div>
         <div><h2>${esc(c.name)}</h2><p>${esc(c.phone || 'No phone')}</p></div></div>
@@ -466,6 +501,9 @@ const VIEWS = {
     ${ms.length ? `<div class="card flush">${ms.map(measureItem).join('')}</div>` : '<div class="card empty">No measurements yet</div>'}
     <h2 class="sec">Quotes & bills <button class="link" data-act="newQuote" data-client="${id}">+ Add</button></h2>
     ${ds.length ? `<div class="card flush">${ds.map(docItem).join('')}</div>` : '<div class="card empty">No quotes or bills yet</div>'}
+    ${pays.length ? `<h2 class="sec">Payments received <span style="text-transform:none;letter-spacing:0">${money(received)}</span></h2>
+    <div class="card flush">${pays.map((x) => `<a class="item" href="#/doc/${x.d.id}"><div class="grow"><div class="t">${esc(x.label)}</div>
+      <div class="s">${longDate(x.p.date)} · ${esc(x.d.number)}${x.p.method ? ' · ' + esc(x.p.method) : ''}</div></div><div class="r">${money(num(x.p.amount))}</div></a>`).join('')}</div>` : ''}
     <div class="row" style="margin-top:24px"><button class="btn danger" data-act="delClient" data-id="${id}">${ICON.trash} Delete client</button></div>`;
     return { title: c.name, html, back: true, tab: 'clients', fab: () => quickMenu(id), after: () => countUpIn($('#view')) };
   },
@@ -559,8 +597,20 @@ const VIEWS = {
         <div class="inline" style="margin-top:12px"><span>Discount (${esc(s.currency)})</span><input inputmode="decimal" data-bind="discount" value="${esc(d.discount)}" placeholder="0"></div>
         <div class="inline"><span>${esc(s.taxName || 'Tax')} %</span><input inputmode="decimal" data-bind="taxPct" value="${esc(d.taxPct)}" placeholder="0"></div>
         <div class="totals"><div><span>${esc(s.taxName || 'Tax')}</span><b id="dt-tax"></b></div><div class="big"><span>Total</span><span id="dt-total"></span></div></div>
-        <div class="inline" style="margin-top:12px"><span>Advance received</span><input inputmode="decimal" data-bind="advance" value="${esc(d.advance)}" placeholder="0"></div>
-        <div class="totals"><div class="big"><span>Balance due</span><span class="bal" id="dt-bal"></span></div></div>
+      </div>
+      <div class="card">
+        <div class="pay-head"><b>Payments received</b><span id="dt-status"></span></div>
+        ${paymentsOf(d).map((p, i) => `<div class="pay" data-act="editPayment" data-pid="${esc(p.id)}">
+          <div class="grow"><div class="t">${esc(payLabel(d, p, i))}</div><div class="s">${longDate(p.date)}${p.method ? ' · ' + esc(p.method) : ''}</div></div>
+          <b>${money(num(p.amount))}</b></div>`).join('') || '<p class="hint" style="margin:8px 0 0">Nothing received yet. Record the advance or any payment here.</p>'}
+        <div class="totals" style="margin-top:10px">
+          <div><span>Total received</span><b id="dt-paid"></b></div>
+          <div class="big"><span>Balance due</span><span class="bal" id="dt-bal"></span></div>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <button class="btn" data-act="addPayment">+ Record payment</button>
+          <button class="btn primary" data-act="markPaid" id="dt-markpaid">${ICON.tick} Mark fully paid</button>
+        </div>
       </div>
       <div class="card"><label style="margin:0">Terms & notes<textarea rows="3" data-bind="notes">${esc(d.notes)}</textarea></label></div>
       <div class="stack">
@@ -579,7 +629,55 @@ const VIEWS = {
     if (!d) return notFound();
     const s = db.settings, c = getClient(d.clientId), t = docTotals(d);
     const rows = d.items.map((it, i) => `<tr><td>${i + 1}</td><td>${nl2br(it.desc)}</td><td class="num">${fmt(num(it.qty))} ${esc(it.unit)}</td><td class="num">${fmt(num(it.rate))}</td><td class="num">${fmt(t.lines[i])}</td></tr>`).join('');
-    const html = `<div class="doc">
+    const detailed = s.billStyle !== 'simple';
+    const pays = paymentsOf(d);
+    const styleSeg = `<div class="seg no-print"><button class="${detailed ? 'on' : ''}" data-act="billStyle" data-v="detailed">Detailed bill</button><button class="${detailed ? '' : 'on'}" data-act="billStyle" data-v="simple">Simple</button></div>`;
+    const actionsHtml = `<div class="doc-actions stack">
+      <a class="btn wa" href="${esc(waLink(c?.phone, docText(d)))}" target="_blank" rel="noopener">${ICON.chat} Send on WhatsApp</a>
+      <button class="btn primary" data-act="print">${ICON.print} Print / Save as PDF</button>
+      ${navigator.share ? `<button class="btn" data-act="shareDoc" data-id="${d.id}">${ICON.share} Share…</button>` : ''}
+      <a class="btn" href="#/doc/${d.id}">${ICON.edit} Edit / record payment</a>
+    </div>`;
+    if (detailed) {
+      const amt = (n) => fmt(n) + '/-';
+      const dmy = (x) => x.split('-').reverse().join('-');
+      const drows = d.items.map((it, i) => `<tr><td class="c">(${i + 1})</td><td class="p">${nl2br(it.desc)}</td>
+        <td class="c">${num(it.qty) ? fmt(num(it.qty)) + ' ' + esc(it.unit || 'No.s') : ''}</td>
+        <td class="c">${num(it.rate) ? fmt(num(it.rate)) : ''}</td><td class="c">${t.lines[i] ? amt(t.lines[i]) : ''}</td></tr>`).join('');
+      const sumRow = (label, val, cls = '') => `<div class="r ${cls}"><span>${label}</span><b>${val}</b></div>`;
+      const html = `${styleSeg}<div class="doc dbill">
+        <div class="wm">${esc(s.email || s.bizName)}</div>
+        <div class="db-top">
+          <div class="db-biz"><div class="nm">${esc(s.bizName)}</div>
+            ${s.tagline ? `<div class="tg">${esc(s.tagline)}</div>` : ''}
+            <div class="ad">${[nl2br(s.address), s.phone ? 'Cell : ' + esc(s.phone) : '', s.email ? 'email: ' + esc(s.email) : ''].filter(Boolean).join('<br>')}</div></div>
+          <div class="db-meta"><div><span>NO:-</span> ${esc(d.number)}</div><div><span>Date:-</span> ${dmy(d.date)}</div>
+            <div>${d.kind === 'bill' ? 'BILL' : 'QUOTATION'}${s.taxId ? ' · ' + esc(s.taxName) + 'IN ' + esc(s.taxId) : ''}</div></div>
+        </div>
+        <div class="db-to">
+          <div class="to"><span>TO,</span><div class="cn">${esc(c?.name || '')}</div>
+            <div class="ca">${[c?.address ? nl2br(c.address) : '', c?.phone ? esc(c.phone) : ''].filter(Boolean).join('<br>')}</div></div>
+          <div class="gp">${s.payNo ? esc(s.payLabel || 'G-PAY NO.') + ':- ' + esc(s.payNo) : ''}</div>
+        </div>
+        <table class="db-items"><thead><tr><th>Sr<br>No</th><th>Particulars</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead>
+          <tbody>${drows}<tr class="fill"><td></td><td></td><td></td><td></td><td></td></tr></tbody></table>
+        <div class="db-sum">
+          ${t.disc || t.tax ? sumRow('Sub Total', amt(t.sub)) : ''}
+          ${t.disc ? sumRow('Discount', '− ' + amt(t.disc)) : ''}
+          ${t.tax ? sumRow(`${esc(s.taxName)} ${fmt(num(d.taxPct))}%`, amt(t.tax)) : ''}
+          ${sumRow('Total', amt(t.total), 'big')}
+          ${pays.length ? pays.map((p, i) => sumRow(`${esc(payLabel(d, p, i))} <small>${dmy(p.date)}${p.method ? ', ' + esc(p.method) : ''}</small>`, amt(num(p.amount)))).join('') : sumRow('Advance', '')}
+          ${sumRow('Balance', t.status === 'paid' ? 'NIL' : amt(Math.max(0, t.balance)), 'big')}
+        </div>
+        <div class="db-foot">
+          <div class="nt">${d.notes ? '<b>Please Note:</b> ' + nl2br(d.notes) : ''}</div>
+          <div class="sg"><div class="nm">${esc(s.owner || s.bizName)}</div><div class="dots"></div></div>
+        </div>
+        ${t.status === 'paid' && t.total > 0 ? '<div class="stamp">PAID</div>' : ''}
+      </div>${actionsHtml}`;
+      return { title: docTitle(d), html, back: true, tab: 'docs' };
+    }
+    const html = `${styleSeg}<div class="doc">
       <div class="dh">
         <div><div class="biz">${esc(s.bizName)}</div><div class="muted">${[esc(s.owner), esc(s.phone), nl2br(s.address), s.taxId ? esc(s.taxName) + 'IN: ' + esc(s.taxId) : ''].filter(Boolean).join('<br>')}</div></div>
         <div><div class="kind">${d.kind === 'bill' ? 'INVOICE' : 'QUOTATION'}</div><div class="num muted">No. ${esc(d.number)}<br>${longDate(d.date)}</div></div>
@@ -591,17 +689,13 @@ const VIEWS = {
         ${t.disc ? `<div><span>Discount</span><span>− ${money(t.disc)}</span></div>` : ''}
         ${t.tax ? `<div><span>${esc(s.taxName)} ${fmt(num(d.taxPct))}%</span><span>${money(t.tax)}</span></div>` : ''}
         <div class="big"><span>Total</span><span>${money(t.total)}</span></div>
-        ${t.adv ? `<div><span>Advance received</span><span>${money(t.adv)}</span></div><div class="big"><span>Balance due</span><span>${money(t.balance)}</span></div>` : ''}
+        ${pays.map((p, i) => `<div><span>${esc(payLabel(d, p, i))} <small class="muted">${longDate(p.date)}${p.method ? ', ' + esc(p.method) : ''}</small></span><span>${money(num(p.amount))}</span></div>`).join('')}
+        ${pays.length ? `<div class="big"><span>${t.status === 'paid' ? 'Paid in full' : 'Balance due'}</span><span>${t.status === 'paid' ? '✓' : money(t.balance)}</span></div>` : ''}
       </div>
       ${d.notes ? `<p><b>Terms & notes</b><br>${nl2br(d.notes)}</p>` : ''}
+      ${s.payNo ? `<p><b>${esc(s.payLabel || 'Pay to')}</b> ${esc(s.payNo)}</p>` : ''}
       <div class="sign"><span>For ${esc(s.bizName)}</span></div>
-    </div>
-    <div class="doc-actions stack">
-      <a class="btn wa" href="${esc(waLink(c?.phone, docText(d)))}" target="_blank" rel="noopener">${ICON.chat} Send on WhatsApp</a>
-      <button class="btn primary" data-act="print">${ICON.print} Print / Save as PDF</button>
-      ${navigator.share ? `<button class="btn" data-act="shareDoc" data-id="${d.id}">${ICON.share} Share…</button>` : ''}
-      <a class="btn" href="#/doc/${d.id}">${ICON.edit} Edit</a>
-    </div>`;
+    </div>${actionsHtml}`;
     return { title: docTitle(d), html, back: true, tab: 'docs' };
   },
 
@@ -640,9 +734,16 @@ const VIEWS = {
     const html = `<div data-obj="settings">
       <h2 class="sec">Your business (printed on quotes & bills)</h2>
       <div class="card">
-        ${f('bizName', 'Business name')}${f('owner', 'Your name')}${f('phone', 'Phone', 'type="tel"')}
+        ${f('bizName', 'Business name')}${f('tagline', 'Line under the name', 'placeholder="e.g. Turn Key Development &amp; Consultancy"')}
+        ${f('owner', 'Your name (for the signature)')}${f('phone', 'Phone', 'type="tel" placeholder="8805441403 / 8805442710"')}
+        ${f('email', 'Email', 'type="email"')}
         <label>Address<textarea rows="2" data-bind="address">${esc(s.address)}</textarea></label>
         ${f('taxId', 'GSTIN / tax number (optional)')}
+      </div>
+      <h2 class="sec">Getting paid (printed on bills)</h2>
+      <div class="card">
+        <div class="row">${f('payLabel', 'Label', 'placeholder="G-PAY NO."')}${f('payNo', 'Number / UPI ID', 'placeholder="8805441403"')}</div>
+        <p class="hint" style="margin:0">Shown in the box beside the client's name, so clients know where to send money.</p>
       </div>
       <h2 class="sec">Money</h2>
       <div class="card">
@@ -660,7 +761,7 @@ const VIEWS = {
       ${!window.Capacitor?.isNativePlatform?.() ? `<h2 class="sec">Android app</h2>
       <div class="card"><p class="hint" style="margin:0 0 12px">Prefer a proper app, with real phone notifications for reminders? Get the Android version.</p>
       <a class="btn primary" style="width:100%" href="download.html">${ICON.doc} Download for Android</a></div>` : ''}
-      <p class="hint" style="text-align:center;margin-top:20px">BizBook v1.0 · ${db.clients.length} clients · ${db.promises.length} promises · ${db.docs.length} quotes/bills</p>
+      <p class="hint" style="text-align:center;margin-top:20px">BizBook v1.1 · ${db.clients.length} clients · ${db.promises.length} promises · ${db.docs.length} quotes/bills</p>
     </div>`;
     return { title: 'Settings', html, back: true, tab: '' };
   },
@@ -678,8 +779,12 @@ function measureItem(m) {
 function docItem(d) {
   const t = docTotals(d);
   let badge = '';
-  if (d.kind === 'bill') badge = t.balance > 0.005 ? `<span class="badge red">Due ${money(t.balance)}</span>` : '<span class="badge">Paid</span>';
-  else if (d.converted) badge = '<span class="badge">Billed</span>';
+  if (d.kind === 'bill') {
+    badge = t.status === 'paid' ? '<span class="badge">Paid ✓</span>'
+      : t.status === 'part' ? `<span class="badge amber">Part paid · due ${money(t.balance)}</span>`
+        : `<span class="badge red">Due ${money(t.balance)}</span>`;
+  } else if (d.converted) badge = '<span class="badge">Billed</span>';
+  else if (t.paid > 0) badge = `<span class="badge amber">Advance ${money(t.paid)}</span>`;
   return `<a class="item" href="#/doc/${d.id}"><div class="grow"><div class="t">${esc(d.number)} · ${esc(clientName(d.clientId) || 'No client')}</div>
     <div class="s">${longDate(d.date)}</div></div><div class="r">${money(t.total)}<small>${badge}</small></div></a>`;
 }
@@ -700,7 +805,46 @@ function refreshDoc(d) {
   const t = docTotals(d);
   t.lines.forEach((v, i) => { const el = document.getElementById('da-' + i); if (el) el.textContent = money(v); });
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
-  set('dt-sub', money(t.sub)); set('dt-tax', money(t.tax)); set('dt-total', money(t.total)); set('dt-bal', money(t.balance));
+  set('dt-sub', money(t.sub)); set('dt-tax', money(t.tax)); set('dt-total', money(t.total));
+  set('dt-paid', money(t.paid)); set('dt-bal', money(Math.max(0, t.balance)));
+  const st = document.getElementById('dt-status'); if (st) st.innerHTML = statusBadge(t);
+  const mp = document.getElementById('dt-markpaid'); if (mp) mp.hidden = !(t.total > 0 && t.balance > 0.005);
+}
+function statusBadge(t) {
+  if (t.status === 'paid' && t.total > 0) return '<span class="badge">Paid ✓</span>';
+  if (t.status === 'part') return `<span class="badge amber">Part paid</span>`;
+  return t.total > 0 ? '<span class="badge red">Unpaid</span>' : '';
+}
+
+/* Sheet for adding or changing one payment on the bill/quote that is open. */
+function paymentForm(d, pid) {
+  const p = (d.payments || []).find((x) => x.id === pid);
+  const t = docTotals(d);
+  const left = Math.max(0, t.balance + (p ? num(p.amount) : 0));
+  const cur = p || { date: today(), amount: '', method: 'Cash', note: '' };
+  openSheet(`<h2>${p ? 'Edit payment' : 'Record payment'}</h2>
+    <form id="f" autocomplete="off">
+      <p class="hint" style="margin:0 0 12px">${esc(docTitle(d))} · Total ${money(t.total)} · Still to collect ${money(left)}</p>
+      <label>Amount received (${esc(db.settings.currency)})<input name="amount" inputmode="decimal" required value="${esc(cur.amount)}" placeholder="0"></label>
+      <div class="chips">
+        ${left > 0 ? `<button type="button" class="chip" data-act="setAmt" data-v="${r2(left)}">Full ${money(left)}</button>` : ''}
+        ${left > 0 ? [80, 50, 25].map((pc) => `<button type="button" class="chip" data-act="setAmt" data-v="${r2(t.total * pc / 100)}">${pc}%</button>`).join('') : ''}
+      </div>
+      <label>Date<input type="date" name="date" required value="${esc(cur.date)}"></label>
+      <label>How was it paid?<select name="method">${['', ...PAY_METHODS].map((m) => `<option value="${m}" ${m === (cur.method || '') ? 'selected' : ''}>${m || 'Not noted'}</option>`).join('')}</select></label>
+      <label>Note (optional)<input name="note" value="${esc(cur.note)}" placeholder="e.g. Advance, cheque no. 1234"></label>
+      <div class="row"><button type="button" class="btn ghost" data-act="closeSheet">Cancel</button><button class="btn primary">Save</button></div>
+      ${p ? `<div class="row" style="margin-top:10px"><button type="button" class="btn danger" data-act="delPayment" data-pid="${esc(p.id)}">${ICON.trash} Delete this payment</button></div>` : ''}
+    </form>`, (data) => {
+    const amt = num(data.amount);
+    if (!(amt > 0)) { toast('Enter the amount received'); return false; }
+    if (amt > left + 0.005 && !confirm(`${money(amt)} is more than the ${money(left)} still to collect. Save anyway?`)) return false;
+    const rec = { date: data.date, amount: String(amt), method: data.method, note: data.note.trim() };
+    if (p) Object.assign(p, rec); else (d.payments ||= []).push({ id: uid(), ...rec });
+    save();
+    const after = docTotals(d);
+    toast(after.status === 'paid' ? 'Fully paid ✓' : `Saved. ${money(after.balance)} still to collect`);
+  }, !p);
 }
 
 /* ---------- calculator ---------- */
@@ -874,13 +1018,33 @@ const actions = {
   toBill: () => {
     const q = currentObj();
     q.converted = true;
-    newDoc('bill', q.clientId, structuredClone(q.items), { discount: q.discount, taxPct: q.taxPct, advance: q.advance, notes: String(q.notes || '').replace(/^.*quotation valid.*$\n?/gim, '').trim(), fromQuote: q.number });
+    newDoc('bill', q.clientId, structuredClone(q.items), { discount: q.discount, taxPct: q.taxPct, payments: structuredClone(q.payments || []), notes: String(q.notes || '').replace(/^.*quotation valid.*$\n?/gim, '').trim(), fromQuote: q.number });
     toast('Bill made from ' + q.number);
   },
   delDoc: () => {
     const d = currentObj(); if (!confirm(`Delete ${docTitle(d)}?`)) return;
     db.docs = db.docs.filter((x) => x.id !== d.id); save(); go('#/docs');
   },
+  // payments on the open bill/quote
+  addPayment: () => { const d = currentObj(); if (d) paymentForm(d); },
+  editPayment: (x) => { const d = currentObj(); if (d) paymentForm(d, x.pid); },
+  setAmt: (x, el) => {
+    $('#f [name=amount]').value = x.v;
+    el.parentElement.querySelectorAll('.chip').forEach((c) => c.classList.toggle('on', c === el));
+  },
+  delPayment: (x) => {
+    const d = currentObj(); if (!d || !confirm('Delete this payment record?')) return;
+    d.payments = (d.payments || []).filter((p) => p.id !== x.pid); save(); closeSheet(); render();
+  },
+  markPaid: () => {
+    const d = currentObj(); if (!d) return;
+    const t = docTotals(d);
+    if (!(t.balance > 0.005)) return;
+    if (!confirm(`Record ${money(t.balance)} received today and mark ${docTitle(d)} as fully paid?`)) return;
+    (d.payments ||= []).push({ id: uid(), date: today(), amount: String(r2(t.balance)), method: '', note: t.paid > 0 ? 'Final payment' : 'Full payment' });
+    save(); render(); toast('Marked as fully paid ✓');
+  },
+  billStyle: (x) => { db.settings.billStyle = x.v; save(); render(); },
   print: () => window.print(),
   shareDoc: (d) => { const doc = db.docs.find((x) => x.id === d.id); navigator.share({ title: docTitle(doc), text: docText(doc) }).catch(() => {}); },
   // calculator
@@ -918,7 +1082,7 @@ function restore(input) {
       const data = parsed.data || parsed;
       if (!Array.isArray(data.clients) || !Array.isArray(data.promises)) throw new Error('bad');
       if (!confirm(`Restore backup with ${data.clients.length} clients and ${data.promises.length} promises? This replaces what is on this phone now.`)) return;
-      db = { ...structuredClone(DEFAULTS), ...data, settings: { ...DEFAULTS.settings, ...data.settings } };
+      db = migrate(data);
       save(); window.BizNative?.rescheduleAll(); toast('Backup restored'); render();
     } catch (e) { toast('That file is not a BizBook backup'); }
     input.value = '';

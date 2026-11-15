@@ -1,6 +1,6 @@
 // Offline support: keep the app files on the phone.
 // Bump VERSION whenever you change any app file so phones pick up the update.
-const VERSION = 'bizbook-v1.2.0';
+const VERSION = 'bizbook-v1.3.0';
 const FILES = [
   './', 'index.html', 'styles.css', 'app.js', 'manifest.webmanifest',
   'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/maskable-512.png',

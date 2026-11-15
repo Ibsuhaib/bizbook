@@ -360,3 +360,59 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--b
   main { padding: 0; max-width: none; }
   .doc { box-shadow: none; padding: 0; }
 }
+
+/* Payments on a bill */
+.pay-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.pay { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px dashed var(--line); cursor: pointer; }
+.pay-head + .pay { margin-top: 10px; }
+.pay .grow { flex: 1; min-width: 0; }
+.pay .t { font-weight: 600; }
+.pay .s { color: var(--muted); font-size: 14px; }
+.pay:active { background: rgba(var(--spot),.06); }
+
+/* Detailed bill: the boxed, ruled layout of a printed bill book */
+.dbill { position: relative; overflow: hidden; padding: 0; border: 2px solid #333; border-radius: 0; font-size: 13px; line-height: 1.35; font-family: Arial, Helvetica, sans-serif; }
+.dbill .wm { position: absolute; left: 50%; top: 58%; transform: translate(-50%, -50%) rotate(-32deg); font-size: 26px; color: rgba(60, 70, 190, .16); white-space: nowrap; pointer-events: none; }
+.dbill .db-top, .dbill .db-to { display: grid; grid-template-columns: 1.08fr 1fr; border-bottom: 1.5px solid #333; }
+.dbill .db-biz { padding: 6px 8px; border-right: 1.5px solid #333; text-align: center; }
+.dbill .db-biz .nm { font-family: Georgia, "Times New Roman", serif; font-size: 25px; line-height: 1.1; color: #a8397d; text-align: left; }
+.dbill .db-biz .tg { font-weight: 700; font-size: 13.5px; text-align: left; }
+.dbill .db-biz .ad { color: #2b35b5; font-size: 11.5px; }
+.dbill .db-meta { display: grid; grid-template-rows: repeat(3, 1fr); }
+.dbill .db-meta > div { padding: 4px 10px; border-bottom: 1px solid #333; display: flex; align-items: center; font-weight: 700; font-size: 12px; gap: 6px; }
+.dbill .db-meta > div:nth-child(2) { justify-content: center; }
+.dbill .db-meta > div:last-child { border-bottom: 0; font-size: 11px; letter-spacing: .04em; }
+.dbill .db-to .to { padding: 4px 8px 10px; border-right: 1.5px solid #333; }
+.dbill .db-to .to > span { color: #2b35b5; font-weight: 800; }
+.dbill .db-to .cn { font-size: 21px; font-weight: 800; color: #26308f; line-height: 1.15; margin: 4px 0 2px 2px; overflow-wrap: anywhere; }
+.dbill .db-to .ca { font-size: 11.5px; font-weight: 700; text-align: center; }
+.dbill .db-to .gp { display: grid; place-items: center; text-align: center; font-size: 16px; font-weight: 800; padding: 6px; overflow-wrap: anywhere; }
+.dbill table.db-items { margin: 0; border-collapse: collapse; width: 100%; }
+.dbill .db-items th { background: none; text-transform: none; font-size: 12px; text-align: center; border-bottom: 1.5px solid #333; padding: 5px 3px; }
+.dbill .db-items td { border-bottom: 0; border-right: 1px solid #333; padding: 8px 5px; font-weight: 700; vertical-align: top; }
+.dbill .db-items th:not(:last-child) { border-right: 1px solid #333; }
+.dbill .db-items td:last-child { border-right: 0; }
+.dbill .db-items td.c { text-align: center; white-space: nowrap; }
+.dbill .db-items td.p { overflow-wrap: anywhere; }
+.dbill .db-items th:first-child, .dbill .db-items td:first-child { width: 34px; }
+.dbill .db-items tr.fill td { height: 210px; }
+.dbill .db-sum { border-top: 1.5px solid #333; }
+.dbill .db-sum .r { display: grid; grid-template-columns: 1fr 34%; border-bottom: 1px solid #999; }
+.dbill .db-sum .r span { text-align: right; padding: 5px 8px; font-weight: 700; }
+.dbill .db-sum .r small { font-weight: 400; color: #555; }
+.dbill .db-sum .r b { border-left: 1px solid #333; padding: 5px 8px; text-align: center; min-height: 28px; }
+.dbill .db-sum .r.big b { font-size: 17px; }
+.dbill .db-foot { display: grid; grid-template-columns: 1fr auto; gap: 10px; padding: 8px 10px 14px; align-items: end; }
+.dbill .db-foot .nt { font-size: 12px; align-self: start; }
+.dbill .db-foot .sg { text-align: center; min-width: 120px; }
+.dbill .db-foot .sg .nm { font-family: Georgia, "Times New Roman", serif; color: #a8397d; font-size: 14px; margin-top: 26px; }
+.dbill .db-foot .sg .dots { border-bottom: 2px dotted #333; margin-top: 22px; }
+.dbill .stamp { position: absolute; right: 10%; top: 58%; transform: rotate(-14deg); border: 3px solid #2e7d4f; color: #2e7d4f; font-weight: 900; font-size: 26px; letter-spacing: .12em; padding: 2px 14px; border-radius: 6px; opacity: .75; }
+.badge.amber { white-space: normal; }
+@media print {
+  .dbill { font-size: 12pt; margin: 6mm; }
+  .dbill .db-items tr.fill td { height: 115mm; }
+  .dbill .db-biz .nm { font-size: 24pt; }
+  .dbill .db-to .cn { font-size: 19pt; }
+  .seg { display: none !important; }
+}
