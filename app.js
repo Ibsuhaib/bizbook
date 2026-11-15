@@ -9,7 +9,7 @@ const KEY = 'bizbook-v1';
 const DEFAULTS = {
   settings: {
     bizName: 'My Business', owner: '', phone: '', address: '', taxId: '',
-    tagline: '', email: '', payLabel: 'G-PAY NO.', payNo: '', billStyle: 'detailed',
+    tagline: '', email: '', payLabel: 'G-PAY NO.', payNo: '',
     currency: '₹', taxName: 'GST', taxPct: '18', cc: '91',
     terms: '50% advance to start work. Balance on completion.\nQuotation valid for 15 days.',
     qNo: 0, bNo: 0,
@@ -628,74 +628,48 @@ const VIEWS = {
     const d = db.docs.find((x) => x.id === id);
     if (!d) return notFound();
     const s = db.settings, c = getClient(d.clientId), t = docTotals(d);
-    const rows = d.items.map((it, i) => `<tr><td>${i + 1}</td><td>${nl2br(it.desc)}</td><td class="num">${fmt(num(it.qty))} ${esc(it.unit)}</td><td class="num">${fmt(num(it.rate))}</td><td class="num">${fmt(t.lines[i])}</td></tr>`).join('');
-    const detailed = s.billStyle !== 'simple';
     const pays = paymentsOf(d);
-    const styleSeg = `<div class="seg no-print"><button class="${detailed ? 'on' : ''}" data-act="billStyle" data-v="detailed">Detailed bill</button><button class="${detailed ? '' : 'on'}" data-act="billStyle" data-v="simple">Simple</button></div>`;
-    const actionsHtml = `<div class="doc-actions stack">
+    const isBill = d.kind === 'bill';
+    const rows = d.items.map((it, i) => `<tr><td class="sr">${i + 1}</td><td class="ds">${nl2br(it.desc)}</td>
+      <td class="num">${num(it.qty) ? fmt(num(it.qty)) + (it.unit ? ' <i>' + esc(it.unit) + '</i>' : '') : ''}</td>
+      <td class="num">${num(it.rate) ? fmt(num(it.rate)) : ''}</td><td class="num">${t.lines[i] ? fmt(t.lines[i]) : ''}</td></tr>`).join('');
+    const statusPill = !isBill || !t.total ? '' : `<span class="pill ${t.status}">${{ paid: 'Paid', part: 'Part paid', unpaid: 'Unpaid' }[t.status]}</span>`;
+    const bizLines = [nl2br(s.address), esc(s.phone), esc(s.email), s.taxId ? esc(s.taxName) + 'IN ' + esc(s.taxId) : ''].filter(Boolean).join('<br>');
+    const row = (label, val, cls = '') => `<div class="${cls}"><span>${label}</span><span>${val}</span></div>`;
+    const html = `<div class="doc inv">
+      <div class="inv-head">
+        <div class="inv-biz"><div class="nm">${esc(s.bizName)}</div>
+          ${s.tagline ? `<div class="tg">${esc(s.tagline)}</div>` : ''}
+          ${bizLines ? `<div class="ct">${bizLines}</div>` : ''}</div>
+        <div class="inv-meta"><div class="kind">${isBill ? 'Invoice' : 'Quotation'}</div>
+          <div class="kv"><span>No.</span><b>${esc(d.number)}</b></div>
+          <div class="kv"><span>Date</span><b>${longDate(d.date)}</b></div>
+          ${statusPill}</div>
+      </div>
+      <div class="inv-parties">
+        <div><div class="lb">${isBill ? 'Billed to' : 'Prepared for'}</div><div class="cn">${esc(c?.name || '—')}</div>
+          <div class="ct">${[c?.address ? nl2br(c.address) : '', c?.phone ? esc(c.phone) : ''].filter(Boolean).join('<br>')}</div></div>
+        ${s.payNo ? `<div class="pt"><div class="lb">${esc(s.payLabel || 'Pay to')}</div><div class="pn">${esc(s.payNo)}</div></div>` : ''}
+      </div>
+      <table><thead><tr><th class="sr">#</th><th>Particulars</th><th class="num">Qty</th><th class="num">Rate</th><th class="num">Amount</th></tr></thead><tbody>${rows}</tbody></table>
+      <div class="sum">
+        ${t.disc || t.tax ? row('Subtotal', money(t.sub)) : ''}
+        ${t.disc ? row('Discount', '− ' + money(t.disc)) : ''}
+        ${t.tax ? row(`${esc(s.taxName)} ${fmt(num(d.taxPct))}%`, money(t.tax)) : ''}
+        ${row('Total', money(t.total), 'tot')}
+        ${pays.map((p, i) => row(`${esc(payLabel(d, p, i))}<small>${longDate(p.date)}${p.method ? ' · ' + esc(p.method) : ''}</small>`, '− ' + money(num(p.amount)), 'pd')).join('')}
+        ${pays.length ? (t.status === 'paid' ? row('Paid in full', money(0), 'due ok') : row('Balance due', money(Math.max(0, t.balance)), 'due')) : ''}
+      </div>
+      <div class="inv-foot">
+        <div class="nt">${d.notes ? `<div class="lb">Notes</div>${nl2br(d.notes)}` : ''}</div>
+        <div class="sg"><div class="ln"></div><b>${esc(s.owner || s.bizName)}</b><span>Authorised signatory</span></div>
+      </div>
+    </div><div class="doc-actions stack">
       <a class="btn wa" href="${esc(waLink(c?.phone, docText(d)))}" target="_blank" rel="noopener">${ICON.chat} Send on WhatsApp</a>
       <button class="btn primary" data-act="print">${ICON.print} Print / Save as PDF</button>
       ${navigator.share ? `<button class="btn" data-act="shareDoc" data-id="${d.id}">${ICON.share} Share…</button>` : ''}
       <a class="btn" href="#/doc/${d.id}">${ICON.edit} Edit / record payment</a>
     </div>`;
-    if (detailed) {
-      const amt = (n) => fmt(n) + '/-';
-      const dmy = (x) => x.split('-').reverse().join('-');
-      const drows = d.items.map((it, i) => `<tr><td class="c">(${i + 1})</td><td class="p">${nl2br(it.desc)}</td>
-        <td class="c">${num(it.qty) ? fmt(num(it.qty)) + ' ' + esc(it.unit || 'No.s') : ''}</td>
-        <td class="c">${num(it.rate) ? fmt(num(it.rate)) : ''}</td><td class="c">${t.lines[i] ? amt(t.lines[i]) : ''}</td></tr>`).join('');
-      const sumRow = (label, val, cls = '') => `<div class="r ${cls}"><span>${label}</span><b>${val}</b></div>`;
-      const html = `${styleSeg}<div class="doc dbill">
-        <div class="wm">${esc(s.email || s.bizName)}</div>
-        <div class="db-top">
-          <div class="db-biz"><div class="nm">${esc(s.bizName)}</div>
-            ${s.tagline ? `<div class="tg">${esc(s.tagline)}</div>` : ''}
-            <div class="ad">${[nl2br(s.address), s.phone ? 'Cell : ' + esc(s.phone) : '', s.email ? 'email: ' + esc(s.email) : ''].filter(Boolean).join('<br>')}</div></div>
-          <div class="db-meta"><div><span>NO:-</span> ${esc(d.number)}</div><div><span>Date:-</span> ${dmy(d.date)}</div>
-            <div>${d.kind === 'bill' ? 'BILL' : 'QUOTATION'}${s.taxId ? ' · ' + esc(s.taxName) + 'IN ' + esc(s.taxId) : ''}</div></div>
-        </div>
-        <div class="db-to">
-          <div class="to"><span>TO,</span><div class="cn">${esc(c?.name || '')}</div>
-            <div class="ca">${[c?.address ? nl2br(c.address) : '', c?.phone ? esc(c.phone) : ''].filter(Boolean).join('<br>')}</div></div>
-          <div class="gp">${s.payNo ? esc(s.payLabel || 'G-PAY NO.') + ':- ' + esc(s.payNo) : ''}</div>
-        </div>
-        <table class="db-items"><thead><tr><th>Sr<br>No</th><th>Particulars</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead>
-          <tbody>${drows}<tr class="fill"><td></td><td></td><td></td><td></td><td></td></tr></tbody></table>
-        <div class="db-sum">
-          ${t.disc || t.tax ? sumRow('Sub Total', amt(t.sub)) : ''}
-          ${t.disc ? sumRow('Discount', '− ' + amt(t.disc)) : ''}
-          ${t.tax ? sumRow(`${esc(s.taxName)} ${fmt(num(d.taxPct))}%`, amt(t.tax)) : ''}
-          ${sumRow('Total', amt(t.total), 'big')}
-          ${pays.length ? pays.map((p, i) => sumRow(`${esc(payLabel(d, p, i))} <small>${dmy(p.date)}${p.method ? ', ' + esc(p.method) : ''}</small>`, amt(num(p.amount)))).join('') : sumRow('Advance', '')}
-          ${sumRow('Balance', t.status === 'paid' ? 'NIL' : amt(Math.max(0, t.balance)), 'big')}
-        </div>
-        <div class="db-foot">
-          <div class="nt">${d.notes ? '<b>Please Note:</b> ' + nl2br(d.notes) : ''}</div>
-          <div class="sg"><div class="nm">${esc(s.owner || s.bizName)}</div><div class="dots"></div></div>
-        </div>
-        ${t.status === 'paid' && t.total > 0 ? '<div class="stamp">PAID</div>' : ''}
-      </div>${actionsHtml}`;
-      return { title: docTitle(d), html, back: true, tab: 'docs' };
-    }
-    const html = `${styleSeg}<div class="doc">
-      <div class="dh">
-        <div><div class="biz">${esc(s.bizName)}</div><div class="muted">${[esc(s.owner), esc(s.phone), nl2br(s.address), s.taxId ? esc(s.taxName) + 'IN: ' + esc(s.taxId) : ''].filter(Boolean).join('<br>')}</div></div>
-        <div><div class="kind">${d.kind === 'bill' ? 'INVOICE' : 'QUOTATION'}</div><div class="num muted">No. ${esc(d.number)}<br>${longDate(d.date)}</div></div>
-      </div>
-      <div><span class="muted">To</span><br><b>${esc(c?.name || '—')}</b>${c?.phone ? '<br>' + esc(c.phone) : ''}${c?.address ? '<br>' + nl2br(c.address) : ''}</div>
-      <table><thead><tr><th>#</th><th>Description</th><th class="num">Qty</th><th class="num">Rate</th><th class="num">Amount</th></tr></thead><tbody>${rows}</tbody></table>
-      <div class="sum">
-        <div><span>Subtotal</span><span>${money(t.sub)}</span></div>
-        ${t.disc ? `<div><span>Discount</span><span>− ${money(t.disc)}</span></div>` : ''}
-        ${t.tax ? `<div><span>${esc(s.taxName)} ${fmt(num(d.taxPct))}%</span><span>${money(t.tax)}</span></div>` : ''}
-        <div class="big"><span>Total</span><span>${money(t.total)}</span></div>
-        ${pays.map((p, i) => `<div><span>${esc(payLabel(d, p, i))} <small class="muted">${longDate(p.date)}${p.method ? ', ' + esc(p.method) : ''}</small></span><span>${money(num(p.amount))}</span></div>`).join('')}
-        ${pays.length ? `<div class="big"><span>${t.status === 'paid' ? 'Paid in full' : 'Balance due'}</span><span>${t.status === 'paid' ? '✓' : money(t.balance)}</span></div>` : ''}
-      </div>
-      ${d.notes ? `<p><b>Terms & notes</b><br>${nl2br(d.notes)}</p>` : ''}
-      ${s.payNo ? `<p><b>${esc(s.payLabel || 'Pay to')}</b> ${esc(s.payNo)}</p>` : ''}
-      <div class="sign"><span>For ${esc(s.bizName)}</span></div>
-    </div>${actionsHtml}`;
     return { title: docTitle(d), html, back: true, tab: 'docs' };
   },
 
@@ -1044,7 +1018,6 @@ const actions = {
     (d.payments ||= []).push({ id: uid(), date: today(), amount: String(r2(t.balance)), method: '', note: t.paid > 0 ? 'Final payment' : 'Full payment' });
     save(); render(); toast('Marked as fully paid ✓');
   },
-  billStyle: (x) => { db.settings.billStyle = x.v; save(); render(); },
   print: () => window.print(),
   shareDoc: (d) => { const doc = db.docs.find((x) => x.id === d.id); navigator.share({ title: docTitle(doc), text: docText(doc) }).catch(() => {}); },
   // calculator
